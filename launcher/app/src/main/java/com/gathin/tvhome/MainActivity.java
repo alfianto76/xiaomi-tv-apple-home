@@ -1,6 +1,8 @@
 package com.gathin.tvhome;
 
 import android.animation.ArgbEvaluator;
+import android.animation.ObjectAnimator;
+import android.animation.PropertyValuesHolder;
 import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.Dialog;
@@ -29,6 +31,8 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.media.AudioAttributes;
+import android.media.SoundPool;
 import android.media.tv.TvContract;
 import android.media.tv.TvInputInfo;
 import android.media.tv.TvInputManager;
@@ -36,6 +40,7 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
+import android.database.Cursor;
 import android.net.Uri;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
@@ -61,6 +66,7 @@ import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.animation.AnimationUtils;
+import android.view.animation.DecelerateInterpolator;
 import android.view.animation.LayoutAnimationController;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -95,6 +101,11 @@ import java.util.Set;
  * tvOS style home: black, a pinned dock row, an app grid, and one glass highlight that springs between tiles.
  */
 public class MainActivity extends Activity implements AppAdapter.TileListener {
+
+    /** Soft focus tick (res/raw/tick.wav), played whenever focus moves on Home. */
+    private SoundPool tickPool;
+    private int tickId;
+    private long lastTickAt;
 
     private static final int LAUNCHER_SETTINGS_REQUEST = 42;
     /** Sent by QuickSettingsActivity: open Launcher settings from here so Home rebuilds when they close. */
@@ -170,6 +181,34 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private boolean advancedEffects;
     private TextView greeting;
     private View clockBlock;
+    /** Today's prayer times from the Adzan add-on, five small cells under the clock; gone without the add-on. */
+    private LinearLayout prayerRow;
+    private final TextView[] prayerNames = new TextView[5];
+    private final TextView[] prayerTimes = new TextView[5];
+
+    // ---- Home v2: big centred greeting, clock top right, info panel over the dock, button bar under it ----
+    private static final boolean HOME_V2 = true;
+    private static final int V2_ACCENT = 0xFF3B82F6;
+    private static final int V2_BAR_ROOM_DP = 24;
+    private FrameLayout v2Layer;
+    private LinearLayout v2TopRight;
+    private LinearLayout v2Center;
+    private TextView v2Greeting;
+    private LinearLayout v2Panel;
+    private LinearLayout v2Bar;
+    private TextView v2WeatherIcon;
+    private TextView v2WeatherText;
+    private TextView v2PrayerName;
+    private TextView v2PrayerTime;
+    private final View[] v2MatchViews = new View[2];
+    private final View[] v2MatchDividers = new View[2];
+    private final ImageView[][] v2Badges = new ImageView[2][2];
+    private final TextView[][] v2Teams = new TextView[2][2];
+    private final TextView[] v2MatchMeta = new TextView[2];
+    private final HashMap<String, Bitmap> v2BadgeCache = new HashMap<>();
+    private int v2LastTile = 0;
+    private int v2DockTop = -1;
+    private boolean v2LibraryFromBar;
     private View btnInputs;
     /** config show_inputs_pill: false keeps the Inputs pill hidden even when the TV has inputs. */
     private boolean showInputsPill = true;
@@ -338,6 +377,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         @Override
         public void run() {
             updateGreeting();
+            updatePrayerLine();
+            updateHomeInfo();
             updateRace();
             // The pill follows the network callbacks and each return to Home; only the diya's flame follows the
             // signal level, so only it needs this minute's binder calls (about 7 ms on the UI thread).
@@ -352,6 +393,23 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        tickPool = new SoundPool.Builder().setMaxStreams(2).setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()).build();
+        tickId = tickPool.load(this, R.raw.tick, 1);
+        getWindow().getDecorView().getViewTreeObserver().addOnGlobalFocusChangeListener((oldFocus, newFocus) -> {
+            if (oldFocus == null || newFocus == null || oldFocus == newFocus || tickPool == null) return;
+            long now = SystemClock.uptimeMillis();
+            if (now - lastTickAt < 35) return;
+            lastTickAt = now;
+            tickPool.play(tickId, 0.4f, 0.4f, 1, 0, 1f);
+            View focusedTile = gridTileOf(newFocus);
+            if (focusedTile != null && grid != null) {
+                int p = grid.getChildAdapterPosition(focusedTile);
+                if (p >= 0) v2LastTile = p;
+            }
+            // parallaxTilt(oldFocus, newFocus);
+        });
         density = getResources().getDisplayMetrics().density;
         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
         Config cfg = Config.load(this);
@@ -423,6 +481,60 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         greeting = findViewById(R.id.greeting);
         clockBlock = findViewById(R.id.leftBlock);
         greetingColor = greeting.getCurrentTextColor();
+        // The greeting sits right above the date ("SELAMAT MALAM, ALFIAN" over "JUMAT, 23 OKTOBER").
+        View dateView = findViewById(R.id.date);
+        if (dateView != null && dateView.getParent() instanceof ViewGroup
+                && greeting.getParent() instanceof ViewGroup) {
+            ((ViewGroup) greeting.getParent()).removeView(greeting);
+            LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            glp.bottomMargin = Math.round(3 * getResources().getDisplayMetrics().density);
+            ((ViewGroup) dateView.getParent()).addView(greeting, 0, glp);
+        }
+        if (clockBlock instanceof LinearLayout) {
+            float d = getResources().getDisplayMetrics().density;
+            prayerRow = new LinearLayout(this);
+            prayerRow.setOrientation(LinearLayout.HORIZONTAL);
+            prayerRow.setFocusable(false);
+            prayerRow.setVisibility(View.GONE);
+            for (int i = 0; i < 5; i++) {
+                if (i > 0) {
+                    View divider = new View(this);
+                    divider.setBackgroundColor(0x33FFFFFF);
+                    LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(Math.max(1, Math.round(d)),
+                            Math.round(26 * d));
+                    dlp.gravity = Gravity.CENTER_VERTICAL;
+                    prayerRow.addView(divider, dlp);
+                }
+                LinearLayout cell = new LinearLayout(this);
+                cell.setOrientation(LinearLayout.VERTICAL);
+                cell.setGravity(Gravity.CENTER_HORIZONTAL);
+                cell.setPadding(Math.round(14 * d), 0, Math.round(14 * d), 0);
+                TextView name = new TextView(this);
+                name.setSingleLine(true);
+                name.setAllCaps(true);
+                name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+                name.setLetterSpacing(0.16f);
+                name.setTextColor(0x80FFFFFF);
+                TextView time = new TextView(this);
+                time.setSingleLine(true);
+                time.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+                time.setTextColor(0xD9FFFFFF);
+                time.setIncludeFontPadding(false);
+                cell.addView(name);
+                cell.addView(time);
+                prayerNames[i] = name;
+                prayerTimes[i] = time;
+                prayerRow.addView(cell);
+            }
+            LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            // The first cell's padding lines its text up with the clock.
+            plp.setMarginStart(Math.round(-10 * d));
+            plp.topMargin = Math.round(8 * d);
+            ((LinearLayout) clockBlock).addView(prayerRow, plp);
+        }
+        if (HOME_V2) setUpHomeV2();
         if (getResources().getBoolean(R.bool.rtl_menu_bar)) {
             // Center Hebrew greetings over the numeric time, independent of a visible AM/PM label.
             findViewById(R.id.clock).addOnLayoutChangeListener((v, l, t, right, bottom, ol, ot, or, ob) -> {
@@ -501,7 +613,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         grid.setItemAnimator(null);
         // Tiles that scroll out while one is carried come back from the view cache without a rebind; set their
         // dimming again whenever one attaches, so none stays dim after the drop.
-        grid.addOnChildAttachStateChangeListener(new RecyclerView.OnChildAttachStateChangeListener() {
+        RecyclerView homeGrid = findViewById(R.id.grid);
+        homeGrid.addOnChildAttachStateChangeListener(new RecyclerView.OnChildAttachStateChangeListener() {
             @Override
             public void onChildViewAttachedToWindow(@NonNull View v) {
                 v.setAlpha(tileAlpha(grid.getChildAdapterPosition(v)));
@@ -545,8 +658,19 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (MainActivity.this.dockRow && cfg.dockTitle && rowsBelowDock > 0) want = Math.max(want, (int) (AppAdapter.TITLE_ROOM_DP * density));
             // No dock to push down: the grid starts at the top, with room for the first row's zoom and glass.
             if (!MainActivity.this.dockRow) want = (int) (AppAdapter.TOP_ROOM_DP * density);
+            if (HOME_V2 && MainActivity.this.dockRow) want = Math.max(0, want - (int) (V2_BAR_ROOM_DP * density));
             if (grid.getPaddingTop() != want) {
                 grid.setPadding(grid.getPaddingLeft(), want, grid.getPaddingRight(), grid.getPaddingBottom());
+            }
+            if (HOME_V2) {
+                int[] g = new int[2], rt = new int[2];
+                grid.getLocationInWindow(g);
+                root.getLocationInWindow(rt);
+                int dockTop = g[1] - rt[1] + want;
+                if (dockTop != v2DockTop) {
+                    v2DockTop = dockTop;
+                    grid.post(MainActivity.this::positionHomeV2);
+                }
             }
             // Cold start or column count > 4: the first focus can run before the grid has its final width or
             // padding, leaving the glass at the XML design size until a key is pressed.
@@ -557,6 +681,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         grid.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
             public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                if (v2Layer != null) {
+                    float a = rv.canScrollVertically(-1) ? 0f : 1f;
+                    for (View v : new View[]{v2Center, v2Panel, v2Bar}) {
+                        if (v != null && v.getAlpha() != a) v.animate().alpha(a).setDuration(120).start();
+                    }
+                }
                 if (!glassShown) return;
                 glassTargetY -= dy;
                 glassScrollShift -= dy;
@@ -841,6 +971,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
         if (openLiveTvAfterBoot()) return;
         updateGreeting();
+        updatePrayerLine();
+        updateHomeInfo();
         updateRace();
         // The network and Inputs pills keep their state while Home is in the background, and callbacks update them
         // when the network or the inputs change, so this refresh only catches anything missed. Its binder calls
@@ -1082,9 +1214,48 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
     }
 
+    /** The grid tile (direct child of the grid) that holds v, or null when v is not in the grid. */
+    private View gridTileOf(View v) {
+        if (grid == null) return null;
+        while (v != null && v.getParent() instanceof View) {
+            if (v.getParent() == grid) return v;
+            v = (View) v.getParent();
+        }
+        return null;
+    }
+
+    /**
+     * Apple TV-style parallax: the newly focused tile tilts in the direction focus came from, then
+     * settles flat, and the tile left behind eases back to flat.
+     */
+    private void parallaxTilt(View oldFocus, View newFocus) {
+        View from = gridTileOf(oldFocus), to = gridTileOf(newFocus);
+        if (from != null && from != to) {
+            ObjectAnimator.ofPropertyValuesHolder(from,
+                    PropertyValuesHolder.ofFloat(View.ROTATION_X, 0f),
+                    PropertyValuesHolder.ofFloat(View.ROTATION_Y, 0f)).setDuration(120).start();
+        }
+        if (to == null) return;
+        int[] a = new int[2], b = new int[2];
+        oldFocus.getLocationOnScreen(a);
+        newFocus.getLocationOnScreen(b);
+        float dx = Math.signum(b[0] - a[0]), dy = Math.signum(b[1] - a[1]);
+        if (dx == 0f && dy == 0f) return;
+        to.setCameraDistance(12000f * density);
+        to.setPivotX(to.getWidth() / 2f);
+        to.setPivotY(to.getHeight() / 2f);
+        ObjectAnimator tilt = ObjectAnimator.ofPropertyValuesHolder(to,
+                PropertyValuesHolder.ofFloat(View.ROTATION_Y, 5f * dx, 0f),
+                PropertyValuesHolder.ofFloat(View.ROTATION_X, -4f * dy, 0f));
+        tilt.setDuration(180);
+        tilt.setInterpolator(new DecelerateInterpolator(1.6f));
+        tilt.start();
+    }
+
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (tickPool != null) { tickPool.release(); tickPool = null; }
         unregisterReceiver(packageReceiver);
         wallpaperPlayer.close();
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
@@ -1462,6 +1633,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         appLibrary = new AppLibraryDialog(this, animations, reducedMotion, appLibrarySelection, adapter::containsPackage, () -> reloadApps(false), () -> {
             appLibrary = null;
             openPopup = null;
+            if (v2LibraryFromBar) {
+                v2LibraryFromBar = false;
+                if (v2Bar != null && v2Bar.getChildCount() > 0) v2Bar.getChildAt(0).requestFocus();
+                return;
+            }
             if (libraryFromTopBar) {
                 libraryFromTopBar = false;
                 btnLibraryTop.requestFocus();
@@ -2110,6 +2286,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (position < COLUMNS) return false;          // dock row: let focus move to the top bar
             target = position - COLUMNS;
         } else {
+            if (v2Bar != null && dockRow && position < COLUMNS && v2Bar.getChildCount() > 0) {
+                int n = v2Bar.getChildCount();
+                v2Bar.getChildAt(Math.min(n - 1, position * n / Math.max(1, COLUMNS))).requestFocus();
+                grid.playSoundEffect(SoundEffectConstants.NAVIGATION_DOWN);
+                return true;
+            }
             int lastRowStart = ((count - 1) / COLUMNS) * COLUMNS;
             if (position >= lastRowStart) {
                 if (adapter.isLibraryAt(count)) focusLibrary();
@@ -2238,13 +2420,396 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     private void updateClockVisibility() {
         boolean valid = System.currentTimeMillis() >= TIME_VALID_AFTER_MS;
-        clockBlock.setVisibility(valid ? View.VISIBLE : View.INVISIBLE);
+        clockBlock.setVisibility(HOME_V2 ? View.GONE : valid ? View.VISIBLE : View.INVISIBLE);
         handler.removeCallbacks(clockCheck);
         if (valid) {
             updateGreeting();
         } else {
             handler.postDelayed(clockCheck, 1_000L);
         }
+    }
+
+    // ---- Home v2 ----------------------------------------------------------------------------------
+
+    private int dp(float v) {
+        return Math.round(v * density);
+    }
+
+    private TextView v2Text(float sp, int color) {
+        TextView t = new TextView(this);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
+        t.setTextColor(color);
+        t.setSingleLine(true);
+        t.setEllipsize(TextUtils.TruncateAt.END);
+        t.setFocusable(false);
+        return t;
+    }
+
+    private View v2Divider(int heightDp) {
+        View v = new View(this);
+        v.setBackgroundColor(0x26FFFFFF);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Math.max(1, dp(1)), dp(heightDp));
+        lp.gravity = Gravity.CENTER_VERTICAL;
+        lp.setMargins(dp(18), 0, dp(18), 0);
+        v.setLayoutParams(lp);
+        return v;
+    }
+
+    /** Builds the v2 overlay over Home and hides the old header (clock block and top pills). */
+    private void setUpHomeV2() {
+        View oldButtons = findViewById(R.id.topButtons);
+        if (oldButtons != null) oldButtons.setVisibility(View.GONE);
+        clockBlock.setVisibility(View.GONE);
+
+        v2Layer = new FrameLayout(this);
+        v2Layer.setClipChildren(false);
+        v2Layer.setFocusable(false);
+        root.addView(v2Layer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // Top right: date, clock, accent line.
+        v2TopRight = new LinearLayout(this);
+        v2TopRight.setOrientation(LinearLayout.VERTICAL);
+        v2TopRight.setGravity(Gravity.END);
+        android.widget.TextClock date = new android.widget.TextClock(this);
+        date.setFormat12Hour("EEEE, d MMMM");
+        date.setFormat24Hour("EEEE, d MMMM");
+        date.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        date.setTextColor(0xB3FFFFFF);
+        date.setLetterSpacing(0.08f);
+        date.setSingleLine(true);
+        date.setGravity(Gravity.END);
+        v2TopRight.setMinimumWidth(dp(280));
+        v2TopRight.addView(date, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        android.widget.TextClock clock = new android.widget.TextClock(this);
+        clock.setFormat12Hour("h:mm");
+        clock.setFormat24Hour("HH:mm");
+        clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, 44);
+        clock.setTextColor(0xFFFFFFFF);
+        clock.setTypeface(android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL));
+        clock.setIncludeFontPadding(false);
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        clp.topMargin = dp(4);
+        v2TopRight.addView(clock, clp);
+        View accent = new View(this);
+        accent.setBackgroundColor(V2_ACCENT);
+        LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(dp(34), dp(2));
+        alp.topMargin = dp(10);
+        v2TopRight.addView(accent, alp);
+        FrameLayout.LayoutParams trp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+        trp.setMargins(0, dp(26), dp(48), 0);
+        v2Layer.addView(v2TopRight, trp);
+
+        // Centre: the greeting and a tagline, both centred on the screen.
+        v2Center = new LinearLayout(this);
+        v2Center.setOrientation(LinearLayout.VERTICAL);
+        v2Center.setGravity(Gravity.CENTER_HORIZONTAL);
+        v2Greeting = v2Text(34, 0xFFFFFFFF);
+        v2Greeting.setGravity(Gravity.CENTER);
+        v2Greeting.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
+        v2Greeting.setShadowLayer(dp(12), 0, dp(2), 0x66000000);
+        v2Center.addView(v2Greeting, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView tagline = v2Text(14, 0xB3FFFFFF);
+        tagline.setGravity(Gravity.CENTER);
+        tagline.setText("Santai  ·  Nonton  ·  Jelajahi");
+        tagline.setLetterSpacing(0.04f);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tlp.topMargin = dp(8);
+        v2Center.addView(tagline, tlp);
+        FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        cp.topMargin = dp(110);
+        v2Layer.addView(v2Center, cp);
+
+        // Info panel: weather | today's five prayer times | the next match.
+        v2Panel = new LinearLayout(this);
+        v2Panel.setOrientation(LinearLayout.HORIZONTAL);
+        v2Panel.setGravity(Gravity.CENTER_VERTICAL);
+        v2Panel.setPadding(dp(26), dp(12), dp(26), dp(12));
+        GradientDrawable panelBg = new GradientDrawable();
+        panelBg.setColor(0xB30E1522);
+        panelBg.setCornerRadius(dp(22));
+        panelBg.setStroke(Math.max(1, dp(1)), 0x22FFFFFF);
+        v2Panel.setBackground(panelBg);
+        v2Panel.setVisibility(View.INVISIBLE);
+
+        LinearLayout weather = new LinearLayout(this);
+        weather.setOrientation(LinearLayout.HORIZONTAL);
+        weather.setGravity(Gravity.CENTER_VERTICAL);
+        v2WeatherIcon = v2Text(26, 0xFFFFFFFF);
+        weather.addView(v2WeatherIcon);
+        LinearLayout weatherWords = new LinearLayout(this);
+        weatherWords.setOrientation(LinearLayout.VERTICAL);
+        v2WeatherText = v2Text(15, 0xF2FFFFFF);
+        v2PrayerName = v2Text(11, 0x99FFFFFF);   // the weather's words, under the place and temperature
+        weatherWords.addView(v2WeatherText);
+        weatherWords.addView(v2PrayerName);
+        LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        wlp.setMarginStart(dp(12));
+        weather.addView(weatherWords, wlp);
+        v2Panel.addView(weather, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        v2Panel.addView(v2Divider(40));
+        if (prayerRow != null) {
+            if (prayerRow.getParent() instanceof ViewGroup) ((ViewGroup) prayerRow.getParent()).removeView(prayerRow);
+            v2Panel.addView(prayerRow, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+
+        View div = v2Divider(48);
+        v2MatchDividers[0] = div;
+        v2Panel.addView(div);
+        LinearLayout match = new LinearLayout(this);
+        match.setOrientation(LinearLayout.VERTICAL);
+        match.setGravity(Gravity.CENTER_HORIZONTAL);
+        LinearLayout teams = new LinearLayout(this);
+        teams.setOrientation(LinearLayout.HORIZONTAL);
+        teams.setGravity(Gravity.CENTER_VERTICAL);
+        for (int side = 0; side < 2; side++) {
+            if (side == 1) {
+                TextView vs = v2Text(11, 0x80FFFFFF);
+                vs.setText("vs");
+                LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                vlp.setMargins(dp(10), 0, dp(10), dp(14));
+                teams.addView(vs, vlp);
+            }
+            LinearLayout team = new LinearLayout(this);
+            team.setOrientation(LinearLayout.VERTICAL);
+            team.setGravity(Gravity.CENTER_HORIZONTAL);
+            ImageView badge = new ImageView(this);
+            badge.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            team.addView(badge, new LinearLayout.LayoutParams(dp(26), dp(26)));
+            TextView name = v2Text(12, 0xE6FFFFFF);
+            name.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            nlp.topMargin = dp(3);
+            team.addView(name, nlp);
+            v2Badges[0][side] = badge;
+            v2Teams[0][side] = name;
+            teams.addView(team, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        match.addView(teams, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView meta = v2Text(10, 0x99FFFFFF);
+        LinearLayout.LayoutParams mlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        mlp.topMargin = dp(4);
+        match.addView(meta, mlp);
+        v2MatchMeta[0] = meta;
+        v2MatchViews[0] = match;
+        v2Panel.addView(match, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f));
+
+        FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
+        pp.setMargins(dp(48), 0, dp(48), dp(200));
+        v2Layer.addView(v2Panel, pp);
+
+        // Only the dock shows on Home; every other app is in "Semua App".
+        RecyclerView v2Grid = findViewById(R.id.grid);
+        v2Grid.addOnChildAttachStateChangeListener(new RecyclerView.OnChildAttachStateChangeListener() {
+            @Override
+            public void onChildViewAttachedToWindow(@NonNull View view) {
+                int p = v2Grid.getChildAdapterPosition(view);
+                view.setVisibility(p >= COLUMNS ? View.INVISIBLE : View.VISIBLE);
+            }
+
+            @Override
+            public void onChildViewDetachedFromWindow(@NonNull View view) {
+                view.setVisibility(View.VISIBLE);
+            }
+        });
+
+        // Bottom bar: icon and label centred together in each button.
+        v2Bar = new LinearLayout(this);
+        v2Bar.setOrientation(LinearLayout.HORIZONTAL);
+        String[] labels = {"Semua App", "Input", "Asisten", "Jadwal Solat", "Pengaturan"};
+        int[] icons = {R.drawable.ic_apps, R.drawable.ic_input, R.drawable.ic_v2_mic, R.drawable.ic_v2_moon,
+                R.drawable.ic_settings};
+        for (int i = 0; i < labels.length; i++) {
+            LinearLayout b = new LinearLayout(this);
+            b.setOrientation(LinearLayout.HORIZONTAL);
+            b.setGravity(Gravity.CENTER);
+            ImageView icon = new ImageView(this);
+            icon.setImageResource(icons[i]);
+            icon.setColorFilter(0xF2FFFFFF);
+            icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            b.addView(icon, new LinearLayout.LayoutParams(dp(16), dp(16)));
+            TextView label = v2Text(13, 0xF2FFFFFF);
+            label.setText(labels[i]);
+            LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            llp.setMarginStart(dp(8));
+            b.addView(label, llp);
+            GradientDrawable normal = new GradientDrawable();
+            normal.setColor(0x1AFFFFFF);
+            normal.setCornerRadius(dp(14));
+            normal.setStroke(Math.max(1, dp(1)), 0x1FFFFFFF);
+            GradientDrawable focused = new GradientDrawable();
+            focused.setColor(0x40FFFFFF);
+            focused.setCornerRadius(dp(14));
+            focused.setStroke(dp(2), V2_ACCENT);
+            android.graphics.drawable.StateListDrawable states = new android.graphics.drawable.StateListDrawable();
+            states.addState(new int[]{android.R.attr.state_focused}, focused);
+            states.addState(new int[]{}, normal);
+            b.setBackground(states);
+            b.setFocusable(true);
+            b.setClickable(true);
+            final int which = i;
+            b.setOnClickListener(v -> onHomeBarClick(which));
+            b.setOnKeyListener((v, keyCode, event) -> {
+                if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+                if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                    focusTile(Math.min(v2LastTile, Math.max(0, COLUMNS - 1)));
+                    return true;
+                }
+                return keyCode == KeyEvent.KEYCODE_DPAD_DOWN;
+            });
+            LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+            blp.setMargins(dp(6), 0, dp(6), 0);
+            v2Bar.addView(b, blp);
+        }
+        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42), Gravity.BOTTOM);
+        bp.setMargins(dp(42), 0, dp(42), dp(22));
+        v2Layer.addView(v2Bar, bp);
+    }
+
+    private void onHomeBarClick(int which) {
+        switch (which) {
+            case 0:
+                v2LibraryFromBar = true;
+                onLibraryRequested();
+                break;
+            case 1:
+                showInputs();
+                break;
+            case 2: {
+                String[] actions = {Intent.ACTION_ASSIST, "android.intent.action.VOICE_ASSIST",
+                        "android.search.action.GLOBAL_SEARCH"};
+                boolean started = false;
+                for (String a : actions) {
+                    try {
+                        startActivity(new Intent(a).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                        started = true;
+                        break;
+                    } catch (RuntimeException ignored) {
+                        // Try the next one.
+                    }
+                }
+                if (!started) Toast.makeText(this, "Asisten tidak tersedia", Toast.LENGTH_SHORT).show();
+                break;
+            }
+            case 3: {
+                Intent open = getPackageManager().getLeanbackLaunchIntentForPackage("id.alfian.tv.adzan");
+                if (open == null) open = getPackageManager().getLaunchIntentForPackage("id.alfian.tv.adzan");
+                if (open != null) startActivity(open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                break;
+            }
+            default: {
+                View settings = findViewById(R.id.btnSettings);
+                if (settings != null) settings.performClick();
+                break;
+            }
+        }
+    }
+
+    /** Puts the info panel just above the dock and centres the greeting in the space left above it. */
+    private void positionHomeV2() {
+        if (v2Panel == null || v2DockTop < 0 || root.getHeight() == 0) return;
+        FrameLayout.LayoutParams pp = (FrameLayout.LayoutParams) v2Panel.getLayoutParams();
+        int bottom = Math.max(dp(80), root.getHeight() - v2DockTop + dp(14));
+        if (pp.bottomMargin != bottom) {
+            pp.bottomMargin = bottom;
+            v2Panel.setLayoutParams(pp);
+        }
+        v2Panel.post(() -> {
+            int panelTop = root.getHeight() - pp.bottomMargin - Math.max(v2Panel.getHeight(), dp(64));
+            int h = Math.max(v2Center.getHeight(), dp(60));
+            FrameLayout.LayoutParams cp = (FrameLayout.LayoutParams) v2Center.getLayoutParams();
+            int top = Math.max(dp(64), (panelTop - h) / 2 + dp(12));
+            if (cp.topMargin != top) {
+                cp.topMargin = top;
+                v2Center.setLayoutParams(cp);
+            }
+        });
+    }
+
+    /** Weather and the next match from the Adzan add-on's provider (the prayer times fill prayerRow). */
+    private void updateHomeInfo() {
+        if (v2Panel == null) return;
+        boolean any = false;
+        try (Cursor c = getContentResolver().query(
+                Uri.parse("content://id.alfian.tv.adzan.times/info"), null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                String place = c.getString(0), temp = c.getString(1), words = c.getString(2), icon = c.getString(3);
+                v2WeatherIcon.setText(icon);
+                v2WeatherText.setText(temp.isEmpty() ? place : place + "  " + temp);
+                v2PrayerName.setText(words);
+                v2PrayerName.setVisibility(words.isEmpty() ? View.GONE : View.VISIBLE);
+                any = true;
+            }
+        } catch (RuntimeException ignored) {
+            // No add-on: the panel stays hidden.
+        }
+        boolean match = false;
+        try (Cursor c = getContentResolver().query(
+                Uri.parse("content://id.alfian.tv.adzan.times/matches"), null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                v2Teams[0][0].setText(c.getString(0));
+                v2Teams[0][1].setText(c.getString(1));
+                v2MatchMeta[0].setText(c.getString(2) + "  ·  " + c.getString(3));
+                v2Badges[0][0].setImageBitmap(v2Badge(c.getString(4)));
+                v2Badges[0][1].setImageBitmap(v2Badge(c.getString(5)));
+                match = true;
+            }
+        } catch (RuntimeException ignored) {
+            match = false;
+        }
+        v2MatchViews[0].setVisibility(match ? View.VISIBLE : View.GONE);
+        v2MatchDividers[0].setVisibility(match ? View.VISIBLE : View.GONE);
+        v2Panel.setVisibility(any ? View.VISIBLE : View.INVISIBLE);
+    }
+
+    private Bitmap v2Badge(String uri) {
+        if (uri == null || uri.isEmpty()) return null;
+        if (v2BadgeCache.containsKey(uri)) return v2BadgeCache.get(uri);
+        Bitmap b = null;
+        try (java.io.InputStream in = getContentResolver().openInputStream(Uri.parse(uri))) {
+            if (in != null) b = android.graphics.BitmapFactory.decodeStream(in);
+        } catch (Exception ignored) {
+            // Not downloaded yet: try again next minute.
+        }
+        if (b != null) v2BadgeCache.put(uri, b);
+        return b;
+    }
+
+    /** Fills the five prayer cells from the Adzan add-on's provider; the next prayer is shown in green. */
+    private void updatePrayerLine() {
+        if (prayerRow == null) return;
+        int filled = 0;
+        try (Cursor c = getContentResolver().query(
+                Uri.parse("content://id.alfian.tv.adzan.times/today"), null, null, null, null)) {
+            while (c != null && filled < 5 && c.moveToNext()) {
+                boolean next = c.getInt(2) == 1;
+                prayerNames[filled].setText(c.getString(0));
+                prayerTimes[filled].setText(c.getString(1));
+                prayerNames[filled].setTextColor(next ? 0xFF2BB673 : 0x80FFFFFF);
+                prayerTimes[filled].setTextColor(next ? 0xFF2BB673 : 0xD9FFFFFF);
+                filled++;
+            }
+        } catch (RuntimeException e) {
+            filled = 0;
+        }
+        prayerRow.setVisibility(filled == 5 ? View.VISIBLE : View.GONE);
     }
 
     private void updateGreeting() {
@@ -2285,6 +2850,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             greeting.setTextColor(greetingColor);
         }
         if (shamsi) shamsiDate.setText(Shamsi.today(getResources()));
+        if (v2Greeting != null) v2Greeting.setText(greeting.getText());
     }
 
     // ---- race-weekend panel (a theme's race_calendar) -----------------------------------------------

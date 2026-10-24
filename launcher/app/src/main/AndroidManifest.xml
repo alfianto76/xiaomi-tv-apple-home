@@ -63,6 +63,8 @@
         <!-- Coocaa OS sources for the Inputs menu (coocaa_sources); see CoocaaSources. -->
         <provider android:authorities="com.skyworth.tv.provider" />
         <provider android:authorities="com.skyworth.tv.sdk.provider" />
+        <!-- Adzan add-on: today's prayer times under the clock. -->
+        <package android:name="id.alfian.tv.adzan" />
     </queries>
 
     <application

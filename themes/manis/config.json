@@ -1,0 +1,31 @@
+{
+  "dock_apps": [
+    "com.netflix.ninja",
+    "org.smarttube.stable",
+    "com.majnioui.tv.prayer",
+    "io.github.sumyabazar1.weather",
+    "com.vidio.android.tv",
+    "com.tiktok.tv"
+  ],
+  "greeting_name": "Alfian",
+  "app_keys": ["scan:425:org.smarttube.stable"],
+  "columns": 6,
+  "rows_below_dock": 1,
+  "background_color": "#090C14",
+  "wallpaper": true,
+  "wallpaper_dim": 20,
+  "cinematic_home": false,
+  "dock_title": true,
+  "dock_glass": true,
+  "dock_opacity": 60,
+  "dock_even_padding": true,
+  "icon_only_buttons": true,
+  "icon_only_inputs": true,
+  "app_glow": true,
+  "ambient_glow": true,
+  "glow_style": "horizon",
+  "fade_rows": true,
+  "focus_overshoot": false,
+  "advanced_effects": true,
+  "home_idle_clock_minutes": 10
+}

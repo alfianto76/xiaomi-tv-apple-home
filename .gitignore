@@ -19,3 +19,8 @@ traces/
 *.aab
 launcher/hs_err_pid*.log
 launcher/replay_pid*.log
+
+# Home v2 fork: personal files stay local
+bench-results/
+themes/apple/wallpaper.jpg
+themes/apple/wallpapers/

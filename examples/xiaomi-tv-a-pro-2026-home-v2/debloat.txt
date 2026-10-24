@@ -1,0 +1,51 @@
+# Xiaomi TV A Pro 2026 (MiTV-MZTU0, river, MediaTek), Google TV 14, firmware V816.0.25.1.14.2.URTMIXM.
+# The list used with the Home v2 setup in README-ID.md. Based on examples/xiaomi-tv-a-pro-2026/debloat.txt.
+#
+# Apply:   TV_HOST=<tv ip> tools/disable.sh examples/xiaomi-tv-a-pro-2026-home-v2/debloat.txt
+# Undo:    TV_HOST=<tv ip> tools/restore.sh examples/xiaomi-tv-a-pro-2026-home-v2/debloat.txt com.google.android.apps.tv.launcherx
+# Everything is DISABLED, not uninstalled. Comment out any line you want to keep.
+#
+# Kept on purpose:
+#   com.xiaomi.mitv.smartshare     AirPlay from an iPhone lives here on this model (it is also Miracast)
+#   com.xiaomi.mi_connect_service  device discovery; AirPlay did not show on the iPhone without it
+#   com.google.android.katniss     Google Assistant / voice search (mic button)
+#   mitv.service, com.mitv.overseaservice, com.mediatek.*, com.mitv.livetv, com.mi.bluetooth
+
+# Xiaomi + Google telemetry
+com.miui.tv.analytics
+com.xiaomi.statistic
+com.xiaomi.tvqs.overseas.y24
+com.google.android.feedback
+
+# PatchWall / "Mi Home" tab, content rows, promos
+com.mitv.tvhome.atv
+com.mitv.tvhome.michannel
+com.mitv.tvhome.mitvplus
+com.mitv.tvhome.oemtab
+com.xm.webcontent
+android.autoinstalls.config.google.gtvpai
+
+# Xiaomi background services
+com.xiaomi.mitv.tvmanager
+
+# Firmware updates (re-enable these three to check for an update)
+com.xiaomi.mitv.updateservice
+com.mitv.upgrader
+com.mediatek.tv.systemupdater
+
+# Google TV setup wizard: disable before build-and-install.sh (see README-ID.md, Wi-Fi note)
+com.google.android.tungsten.setupwraith
+
+# Preloaded apps not used
+com.google.android.play.games
+com.xiaomi.mimusic2
+com.amazon.amazonvideo.livingroom
+com.google.android.youtube.tvmusic
+com.google.android.videos
+com.xiaomi.mitv.mediaexplorer
+
+# Chromecast built-in (phone casting). Comment out to keep casting.
+com.google.android.apps.mediashell
+
+# The YouTube app, only if you use another YouTube client instead. Comment out to keep it.
+com.google.android.youtube.tv

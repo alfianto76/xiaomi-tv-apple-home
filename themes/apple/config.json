@@ -1,0 +1,44 @@
+{
+  "dock_apps": [
+    "com.netflix.ninja",
+    "org.smarttube.stable",
+    "com.majnioui.tv.prayer",
+    "io.github.sumyabazar1.weather",
+    "com.vidio.android.tv",
+    "com.tiktok.tv"
+  ],
+  "greeting_name": "Alfian",
+  "app_keys": [
+    "scan:425:org.smarttube.stable",
+    "hold:scan:425:com.internet.tvbrowser",
+    "scan:394:com.internet.tvbrowser"
+  ],
+  "key_filter": true,
+  "live_tv_package": "com.mitv.livetv",
+  "live_tv_input_id": "com.mediatek.dtv.tvinput.dvbtuner/.DvbTvInputService/HW0",
+  "hidden_apps": [
+    "com.mitv.livetv",
+    "com.xiaomi.mitv.smartshare"
+  ],
+  "columns": 6,
+  "rows_below_dock": 0,
+  "background_color": "#000000",
+  "wallpaper": true,
+  "cinematic_home": false,
+  "dock_title": false,
+  "dock_glass": false,
+  "dock_even_padding": true,
+  "top_menu": false,
+  "show_network_pill": false,
+  "app_glow": false,
+  "glow_style": "horizon",
+  "fade_rows": false,
+  "focus_overshoot": false,
+  "advanced_effects": false,
+  "reduced_motion": true,
+  "home_idle_clock_minutes": 10,
+  "wallpaper_dim": 0,
+  "wallpaper_rotation_minutes": 0,
+  "wallpaper_order": "sequential",
+  "tile_menu": true
+}

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Home-screen banner: crescent and dome on dark green, drawn for this app. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp" android:height="180dp"
+    android:viewportWidth="320" android:viewportHeight="180">
+    <path android:fillColor="#0F1A14" android:pathData="M0,0h320v180h-320z" />
+    <path android:fillColor="#163D2A" android:pathData="M0,140h320v40h-320z" />
+    <path android:fillColor="#2BB673"
+        android:pathData="M160,30a20,20 0,1 0,16.5 31.2a16,16 0,1 1,-16.5 -31.2z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M112,150v-22c0,-24 22,-38 48,-46c26,8 48,22 48,46v22z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M88,150v-60h10v60z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M222,150v-60h10v60z" />
+</vector>

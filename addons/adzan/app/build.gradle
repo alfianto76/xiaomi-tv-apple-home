@@ -1,0 +1,36 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'id.alfian.tv.adzan'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'id.alfian.tv.adzan'
+        minSdk 26
+        targetSdk 34
+        versionCode 4
+        versionName '1.3'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+            // Sideloaded over ADB like the launcher: signed with the debug key.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A crescent over a dome, drawn for this app. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp" android:height="96dp"
+    android:viewportWidth="96" android:viewportHeight="96">
+    <path android:fillColor="#0F1A14" android:pathData="M0,0h96v96h-96z" />
+    <path android:fillColor="#2BB673"
+        android:pathData="M48,18a12,12 0,1 0,10 18.7a9.5,9.5 0,1 1,-10 -18.7z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M22,78v-14c0,-14 12,-22 26,-26c14,4 26,12 26,26v14z" />
+</vector>

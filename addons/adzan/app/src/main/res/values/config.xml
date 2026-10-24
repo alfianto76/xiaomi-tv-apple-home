@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The place the times are for. Coordinates in decimal degrees. -->
+    <string name="latitude" translatable="false">-6.2088</string>
+    <string name="longitude" translatable="false">106.8456</string>
+    <string name="place" translatable="false">Jakarta</string>
+    <!-- Aladhan calculation method (https://aladhan.com/calculation-methods): 20 = Kemenag RI. -->
+    <string name="method" translatable="false">20</string>
+    <!-- Also sound the adzan while the TV is in standby (false: only while the screen is on). -->
+    <bool name="play_when_screen_off">false</bool>
+    <!-- Teams whose next match shows on the launcher's info panel (TheSportsDB team ids).
+         139356 Persib Bandung. Find another team's id on thesportsdb.com (the number in its page address). -->
+    <string-array name="team_ids" translatable="false">
+        <item>139356</item>
+    </string-array>
+</resources>
